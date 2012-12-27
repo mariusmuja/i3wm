@@ -196,6 +196,11 @@ static int route_click(Con *con, xcb_button_press_event_t *event, const bool mod
     const bool proportional = (event->state & BIND_SHIFT);
     const bool in_stacked = (con->parent->layout == L_STACKED || con->parent->layout == L_TABBED);
 
+    /* Kill on middle click */
+    if (dest == CLICK_DECORATION && event->detail == XCB_BUTTON_INDEX_2 && !mod_pressed) {
+        tree_close(con, KILL_WINDOW, false, false);
+    }
+
     /* 1: see if the user scrolled on the decoration of a stacked/tabbed con */
     if (in_stacked &&
         dest == CLICK_DECORATION &&
