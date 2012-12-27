@@ -366,6 +366,11 @@ struct Window {
 
     /** Depth of the window */
     uint16_t depth;
+
+#ifdef USE_ICONS
+    /** Window icon, array of size 16x16 containing the ARGB pixels */
+    uint32_t* icon;
+#endif
 };
 
 /**

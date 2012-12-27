@@ -11,6 +11,9 @@
  *
  */
 #include "all.h"
+#ifdef USE_ICONS
+#include <xcb/xcb_image.h>
+#endif
 
 /* Stores the X11 window ID of the currently focused window */
 xcb_window_t focused_id = XCB_NONE;
@@ -294,6 +297,44 @@ void x_window_kill(xcb_window_t window, kill_window_t kill_window) {
     free(event);
 }
 
+#ifdef USE_ICONS
+
+static inline uint32_t pixel_blend(uint32_t d, uint32_t s)
+{
+	const uint32_t a     = (s >> 24) + 1;
+
+	const uint32_t dstrb = d & 0xFF00FF;
+	const uint32_t dstg  = d & 0xFF00;
+
+	const uint32_t srcrb = s & 0xFF00FF;
+	const uint32_t srcg  = s & 0xFF00;
+
+	uint32_t drb = srcrb - dstrb;
+	uint32_t dg  =  srcg - dstg;
+
+	drb *= a;
+	dg  *= a;  
+	drb >>= 8;
+	dg  >>= 8;
+
+	uint32_t rb = (drb + dstrb) & 0xFF00FF;
+	uint32_t g  = (dg  + dstg) & 0xFF00;
+
+	return rb | g;
+}
+
+/*
+ * Copy icon pixels, blend with background
+ */
+void copy_with_pixel_blend(uint32_t *dst, uint32_t* src, uint32_t background)
+{
+    int i;
+    for(i=0; i < 16*16; ++i) {
+    	*dst++ = pixel_blend(background,*src++);
+    }
+}
+#endif
+
 /*
  * Draws the decoration of the given container onto its parent.
  *
@@ -527,11 +568,48 @@ void x_draw_decoration(Con *con) {
     }
     //DLOG("indent_level = %d, indent_mult = %d\n", indent_level, indent_mult);
     int indent_px = (indent_level * 5) * indent_mult;
+#ifdef USE_ICONS
+    if (win->icon) indent_px += 18;
+#endif
 
     draw_text(win->name,
             parent->pixmap, parent->pm_gc,
             con->deco_rect.x + 2 + indent_px, con->deco_rect.y + text_offset_y,
             con->deco_rect.width - 2 - indent_px);
+
+#ifdef USE_ICONS
+    /* Draw the icon */
+    if (win->icon) {
+        xcb_image_t* icon;
+
+        uint16_t width = 16;
+        uint16_t height = 16;
+        uint32_t icon_pixels[width*height];
+
+        copy_with_pixel_blend(icon_pixels, win->icon, p->color->background);
+
+        icon = xcb_image_create_native( conn,
+                width, height,
+                XCB_IMAGE_FORMAT_Z_PIXMAP,
+                root_depth,
+                NULL,
+                width*height*4,
+                (uint8_t*)icon_pixels
+                );
+                
+        if (icon) {
+            int icon_offset_y = (con->deco_rect.height - 16) / 2;
+
+            xcb_image_put(conn, parent->pixmap, parent->pm_gc,
+                    icon, con->deco_rect.x + indent_px - 16 , con->deco_rect.y + icon_offset_y, 0);
+
+            xcb_image_destroy(icon);
+        }
+        else {
+            ELOG("Error creating XCB image\n");
+        }
+    }
+#endif
 
 after_title:
     /* Since we don’t clip the text at all, it might in some cases be painted

@@ -310,3 +310,84 @@ void window_update_motif_hints(i3Window *win, xcb_get_property_reply_t *prop, bo
 #undef MWM_DECOR_BORDER
 #undef MWM_DECOR_TITLE
 }
+
+
+#ifdef USE_ICONS
+/*
+ * Copy and resize icon if needed
+ */
+void copy_icon_with_resize(uint32_t *dst, int width, int height, uint32_t* src, int s_width, int s_height)
+{
+    int i, j;
+    if (width==s_width && height==s_height) {
+        /*  easy case, same dimensions, just copy data */
+        memcpy(dst, src, width*height*sizeof(uint32_t));
+    }
+    else {
+        uint32_t* row = src;
+        int xstep = s_width/width;
+        int ystep = s_height/height*s_width;
+
+        for(i=0; i < height; ++i) {
+            uint32_t* ptr = row;
+            for(j=0; j < width; ++j) {
+                *dst++ = *ptr;
+                ptr+=xstep;
+            }
+            row += ystep;
+        }
+    }
+}
+
+
+void window_update_icon(i3Window *win, xcb_get_property_reply_t *prop)
+{
+    uint32_t *data = NULL;
+    uint64_t len = 0;
+
+    if(!prop || prop->type != XCB_ATOM_CARDINAL || prop->format != 32) {
+    		DLOG("_NET_WM_ICON is not set\n");
+        FREE(prop);
+        return;
+    }
+
+    uint32_t prop_value_len = xcb_get_property_value_length(prop);
+    uint32_t *prop_value = (uint32_t *) xcb_get_property_value(prop);
+
+    /* Find the number of icons in the reply. */
+    while(prop_value_len > (sizeof(uint32_t) * 2) && prop_value && prop_value[0] && prop_value[1])
+    {
+    	/* Check that the property is as long as it should be (in bytes),
+         handling integer overflow. "+2" to handle the width and height
+         fields. */
+    	const uint64_t crt_len = prop_value[0] * (uint64_t) prop_value[1];
+    	const uint64_t expected_len = (crt_len + 2) * 4;
+    	if(expected_len > prop_value_len)
+    		break;
+
+    	if (len==0 || (crt_len>=16*16 && crt_len<len)) {
+    		len = crt_len;
+    		data  = prop_value;
+    	}
+    	if (len==16*16) break; // found 16 pixels icon
+
+    	/* Find pointer to next icon in the reply. */
+    	prop_value_len -= expected_len;
+    	prop_value = (uint32_t *) (((uint8_t *) prop_value) + expected_len);
+    }
+
+    if (!data ) {
+    	DLOG("Could not get _NET_WM_ICON\n");
+    	free(prop);
+    	return;
+    }
+
+    LOG("Got _NET_WM_ICON of size: (%d,%d)\n", data[0], data[1]);
+
+    FREE(win->icon);
+    win->icon = malloc(16*16*sizeof(uint32_t));
+    copy_icon_with_resize(win->icon, 16, 16, data+2, data[0], data[1]);
+
+    free(prop);
+}
+#endif /* USE_ICONS */

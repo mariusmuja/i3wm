@@ -75,3 +75,12 @@ void window_update_hints(i3Window *win, xcb_get_property_reply_t *prop, bool *ur
  *
  */
 void window_update_motif_hints(i3Window *win, xcb_get_property_reply_t *prop, border_style_t *motif_border_style);
+
+#ifdef USE_ICONS
+/**
+ * Updates the _NET_WM_ICON
+ *
+ */
+void window_update_icon(i3Window *win, xcb_get_property_reply_t *prop);
+
+#endif

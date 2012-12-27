@@ -120,7 +120,9 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
                               class_cookie, leader_cookie, transient_cookie,
                               role_cookie, startup_id_cookie, wm_hints_cookie,
                               motif_wm_hints_cookie;
-
+#ifdef USE_ICONS                              
+    xcb_get_property_cookie_t wm_icon_cookie;
+#endif
 
     geomc = xcb_get_geometry(conn, d);
 
@@ -190,6 +192,9 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     startup_id_cookie = GET_PROPERTY(A__NET_STARTUP_ID, 512);
     wm_hints_cookie = xcb_icccm_get_wm_hints(conn, window);
     motif_wm_hints_cookie = GET_PROPERTY(A__MOTIF_WM_HINTS, 5 * sizeof(uint64_t));
+#ifdef USE_ICONS
+    wm_icon_cookie = xcb_get_property_unchecked(conn, false, window, A__NET_WM_ICON, XCB_ATOM_CARDINAL, 0, UINT32_MAX);
+#endif
     /* TODO: also get wm_normal_hints here. implement after we got rid of xcb-event */
 
     DLOG("Managing window 0x%08x\n", window);
@@ -226,6 +231,9 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     window_update_hints(cwindow, xcb_get_property_reply(conn, wm_hints_cookie, NULL), &urgency_hint);
     border_style_t motif_border_style = BS_NORMAL;
     window_update_motif_hints(cwindow, xcb_get_property_reply(conn, motif_wm_hints_cookie, NULL), &motif_border_style);
+#ifdef USE_ICONS
+    window_update_icon(cwindow, xcb_get_property_reply(conn, wm_icon_cookie, NULL));
+#endif
 
     xcb_get_property_reply_t *startup_id_reply;
     startup_id_reply = xcb_get_property_reply(conn, startup_id_cookie, NULL);
