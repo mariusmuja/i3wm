@@ -288,6 +288,20 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
         }
     }
 
+
+    xcb_get_property_reply_t* state_reply = xcb_get_property_reply(conn, state_cookie, NULL);
+    bool want_fullscreen = false;
+    if (xcb_reply_contains_atom(state_reply, A__NET_WM_STATE_FULLSCREEN)) {
+        want_fullscreen = true;
+    }
+    bool want_floating = false;
+    if (xcb_reply_contains_atom(state_reply, A__NET_WM_STATE_STAYS_ON_TOP)) {
+        /* don't dock _NET_WM_STATE_STAYS_ON_TOP windows */
+        cwindow->dock = W_NODOCK;
+        want_floating = true;
+    }
+    FREE(state_reply);
+
     DLOG("Initial geometry: (%d, %d, %d, %d)\n", geom->x, geom->y, geom->width, geom->height);
 
     Con *nc = NULL;
@@ -411,7 +425,6 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     }
 
     /* set floating if necessary */
-    bool want_floating = false;
     if (xcb_reply_contains_atom(reply, A__NET_WM_WINDOW_TYPE_DIALOG) ||
         xcb_reply_contains_atom(reply, A__NET_WM_WINDOW_TYPE_UTILITY) ||
         xcb_reply_contains_atom(reply, A__NET_WM_WINDOW_TYPE_TOOLBAR) ||
@@ -487,6 +500,9 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     values[0] = CHILD_EVENT_MASK & ~XCB_EVENT_MASK_ENTER_WINDOW;
     xcb_change_window_attributes(conn, window, XCB_CW_EVENT_MASK, values);
     xcb_flush(conn);
+
+    if (want_fullscreen)
+        con_toggle_fullscreen(nc, CF_OUTPUT);
 
     /* Put the client inside the save set. Upon termination (whether killed or
      * normal exit does not matter) of the window manager, these clients will
