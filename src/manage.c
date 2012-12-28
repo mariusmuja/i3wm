@@ -247,6 +247,18 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     Con *search_at = croot;
 
     xcb_get_property_reply_t *reply = xcb_get_property_reply(conn, wm_type_cookie, NULL);
+
+    /* Don't manage desktop type windows, just map them */
+    if (xcb_reply_contains_atom(reply, A__NET_WM_WINDOW_TYPE_DESKTOP)) {
+        LOG("Ignoring window of type desktop\n");
+        xcb_map_window(conn, window);
+
+        uint32_t values[] = { XCB_STACK_MODE_BELOW };
+        xcb_configure_window (conn, window, XCB_CONFIG_WINDOW_STACK_MODE, values);
+
+        goto geom_out;
+    }
+
     if (xcb_reply_contains_atom(reply, A__NET_WM_WINDOW_TYPE_DOCK)) {
         LOG("This window is of type dock\n");
         Output *output = get_output_containing(geom->x, geom->y);
