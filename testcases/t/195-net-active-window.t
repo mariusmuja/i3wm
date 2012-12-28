@@ -62,9 +62,10 @@ my $win3 = open_window;
 
 is($x->input_focus, $win3->id, 'window 3 has focus');
 
-send_net_active_window($win1->id);
+# allowing focus to be changed to a different workspace
+#send_net_active_window($win1->id);
 
-is($x->input_focus, $win3->id, 'window 3 still has focus');
+#is($x->input_focus, $win3->id, 'window 3 still has focus');
 
 ################################################################################
 # Move a window to the scratchpad, send a _NET_ACTIVE_WINDOW for it and verify
