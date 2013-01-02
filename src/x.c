@@ -141,6 +141,7 @@ void x_con_init(Con *con, uint16_t depth) {
 
     Rect dims = { -15, -15, 10, 10 };
     con->frame = create_window(conn, dims, depth, visual, XCB_WINDOW_CLASS_INPUT_OUTPUT, XCURSOR_CURSOR_POINTER, false, mask, values);
+    con->frame_depth = depth;
 
     if (win_colormap != XCB_NONE)
         xcb_free_colormap(conn, win_colormap);
@@ -772,8 +773,8 @@ void x_push_node(Con *con) {
             }
 
             uint16_t win_depth = root_depth;
-            if (con->window)
-                win_depth = con->window->depth;
+            if (con->frame_depth)
+                win_depth = con->frame_depth;
 
             xcb_create_pixmap(conn, win_depth, con->pixmap, con->frame, rect.width, rect.height);
 
