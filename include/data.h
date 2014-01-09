@@ -543,11 +543,6 @@ struct Con {
     /* timer used for disabling urgency */
     struct ev_timer *urgency_timer;
 
-    /* ids/pixmap/graphics context for the frame window */
-    xcb_window_t frame;
-    xcb_pixmap_t pixmap;
-    xcb_gcontext_t pm_gc;
-    bool pixmap_recreated;
     uint16_t frame_depth;
 
     /** Cache for the decoration rendering */
