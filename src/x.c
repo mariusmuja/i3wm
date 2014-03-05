@@ -18,6 +18,11 @@
 /* Stores the X11 window ID of the currently focused window */
 xcb_window_t focused_id = XCB_NONE;
 
+/* Because 'focused_id' might be reset to force input focus (after click to
+ * raise), we separately keep track of the X11 window ID to be able to always
+ * tell whether the focused window actually changed. */
+static xcb_window_t last_focused = XCB_NONE;
+
 /* The bottom-to-top window stack of all windows which are managed by i3.
  * Used for x_get_window_stack(). */
 static xcb_window_t *btt_stack;
@@ -236,7 +241,7 @@ void x_con_kill(Con *con) {
     free(state);
 
     /* Invalidate focused_id to correctly focus new windows with the same ID */
-    focused_id = XCB_NONE;
+    focused_id = last_focused = XCB_NONE;
 }
 
 /*
@@ -928,6 +933,24 @@ static void x_push_node_unmaps(Con *con) {
 }
 
 /*
+ * Returns true if the given container is currently attached to its parent.
+ *
+ * TODO: Remove once #1185 has been fixed
+ */
+static bool is_con_attached(Con *con) {
+    if (con->parent == NULL)
+        return false;
+
+    Con *current;
+    TAILQ_FOREACH(current, &(con->parent->nodes_head), nodes) {
+        if (current == con)
+            return true;
+    }
+
+    return false;
+}
+
+/*
  * Pushes all changes (state of each node, see x_push_node() and the window
  * stack) to X11.
  *
@@ -1051,6 +1074,9 @@ void x_push_changes(Con *con) {
                 send_take_focus(to_focus);
                 set_focus = !focused->window->doesnt_accept_focus;
                 DLOG("set_focus = %d\n", set_focus);
+
+                if (!set_focus && to_focus != last_focused && is_con_attached(focused))
+                   ipc_send_window_event("focus", focused);
             }
 
             if (set_focus) {
@@ -1069,9 +1095,12 @@ void x_push_changes(Con *con) {
                 }
 
                 ewmh_update_active_window(to_focus);
+
+                if (to_focus != XCB_NONE && to_focus != last_focused && focused->window != NULL && is_con_attached(focused))
+                   ipc_send_window_event("focus", focused);
             }
 
-            focused_id = to_focus;
+            focused_id = last_focused = to_focus;
         }
     }
 
