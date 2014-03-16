@@ -702,14 +702,10 @@ static void handle_client_message(xcb_client_message_event_t *event) {
         }
 
         Con *ws = con_get_workspace(con);
-        if (!ws) {
-            return;
-        }
-/*        if (! (ws && workspace_is_visible(ws))) {
+        if (! (ws && workspace_is_visible(ws))) {
             DLOG("Workspace not visible, ignoring _NET_ACTIVE_WINDOW\n");
             return;
         }
-        */
 
         if (con_is_internal(ws)) {
             DLOG("Workspace is internal, ignoring _NET_ACTIVE_WINDOW\n");
