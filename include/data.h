@@ -543,8 +543,6 @@ struct Con {
     /* timer used for disabling urgency */
     struct ev_timer *urgency_timer;
 
-    uint16_t frame_depth;
-
     /** Cache for the decoration rendering */
     struct deco_render_params *deco_render_params;
 
