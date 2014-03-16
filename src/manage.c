@@ -91,7 +91,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
                               class_cookie, leader_cookie, transient_cookie,
                               role_cookie, startup_id_cookie, wm_hints_cookie,
                               wm_normal_hints_cookie, motif_wm_hints_cookie;
-#ifdef USE_ICONS                              
+#ifdef USE_ICONS
     xcb_get_property_cookie_t wm_icon_cookie;
 #endif
 
@@ -334,7 +334,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     if (fs == NULL)
         fs = con_get_fullscreen_con(croot, CF_GLOBAL);
 
-    if (want_fullscreen) {
+    if (xcb_reply_contains_atom(state_reply, A__NET_WM_STATE_FULLSCREEN)) {
         fs = NULL;
         con_toggle_fullscreen(nc, CF_OUTPUT);
     }
