@@ -178,8 +178,8 @@ endif
 
 ifeq ($(UNAME),Darwin)
 LIBS += -liconv
-else
-# Darwin (Mac OS X) doesn’t have librt
+else ifneq ($(UNAME),OpenBSD)
+# Darwin (Mac OS X) and OpenBSD do not have librt
 LIBS += -lrt
 endif
 
