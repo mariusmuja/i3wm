@@ -483,8 +483,8 @@ void cmd_move_con_to_workspace_back_and_forth(I3_CMD) {
  *
  */
 void cmd_move_con_to_workspace_name(I3_CMD, char *name) {
-    if (strncasecmp(name, "__i3_", strlen("__i3_")) == 0) {
-        LOG("You cannot switch to the i3 internal workspaces.\n");
+    if (strncasecmp(name, "__", strlen("__")) == 0) {
+        LOG("You cannot move containers to i3-internal workspaces (\"%s\").\n", name);
         ysuccess(false);
         return;
     }
@@ -782,7 +782,7 @@ void cmd_resize(I3_CMD, char *way, char *direction, char *resize_px, char *resiz
     owindow *current;
     TAILQ_FOREACH(current, &owindows, owindows) {
         /* Don't handle dock windows (issue #1201) */
-        if (current->con->window->dock) {
+        if (current->con->window && current->con->window->dock) {
             DLOG("This is a dock window. Not resizing (con = %p)\n)", current->con);
             continue;
         }
@@ -877,8 +877,16 @@ void cmd_nop(I3_CMD, char *comment) {
 void cmd_append_layout(I3_CMD, char *path) {
     LOG("Appending layout \"%s\"\n", path);
     Con *parent = focused;
+    /* We need to append the layout to a split container, since a leaf
+     * container must not have any children (by definition).
+     * Note that we explicitly check for workspaces, since they are okay for
+     * this purpose, but con_accepts_window() returns false for workspaces. */
+    while (parent->type != CT_WORKSPACE && !con_accepts_window(parent))
+        parent = parent->parent;
+    DLOG("Appending to parent=%p instead of focused=%p\n",
+         parent, focused);
     char *errormsg = NULL;
-    tree_append_json(path, &errormsg);
+    tree_append_json(parent, path, &errormsg);
     if (errormsg != NULL) {
         yerror(errormsg);
         free(errormsg);
@@ -990,8 +998,8 @@ void cmd_workspace_back_and_forth(I3_CMD) {
  *
  */
 void cmd_workspace_name(I3_CMD, char *name) {
-    if (strncasecmp(name, "__i3_", strlen("__i3_")) == 0) {
-        LOG("You cannot switch to the i3 internal workspaces.\n");
+    if (strncasecmp(name, "__", strlen("__")) == 0) {
+        LOG("You cannot switch to the i3-internal workspaces (\"%s\").\n", name);
         ysuccess(false);
         return;
     }
@@ -1859,6 +1867,11 @@ void cmd_scratchpad_show(I3_CMD) {
  *
  */
 void cmd_rename_workspace(I3_CMD, char *old_name, char *new_name) {
+    if (strncasecmp(new_name, "__", strlen("__")) == 0) {
+        LOG("Cannot rename workspace to \"%s\": names starting with __ are i3-internal.", new_name);
+        ysuccess(false);
+        return;
+    }
     if (old_name) {
         LOG("Renaming workspace \"%s\" to \"%s\"\n", old_name, new_name);
     } else {

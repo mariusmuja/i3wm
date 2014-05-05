@@ -148,8 +148,8 @@ void refresh_statusline(void) {
                     block->x_offset = padding_width;
                     break;
                 case ALIGN_CENTER:
-                    block->x_offset = padding_width / 2;
-                    block->x_append = padding_width / 2 + padding_width % 2;
+                    block->x_offset = padding_width / logical_px(2);
+                    block->x_append = padding_width / logical_px(2) + padding_width % logical_px(2);
                     break;
             }
         }
@@ -168,7 +168,7 @@ void refresh_statusline(void) {
         realloc_sl_buffer();
 
     /* Clear the statusline pixmap. */
-    xcb_rectangle_t rect = { 0, 0, root_screen->width_in_pixels, font.height + 2 };
+    xcb_rectangle_t rect = { 0, 0, root_screen->width_in_pixels, font.height + logical_px(5) };
     xcb_poly_fill_rectangle(xcb_connection, statusline_pm, statusline_clear, 1, &rect);
 
     /* Draw the text of each block. */
@@ -185,8 +185,8 @@ void refresh_statusline(void) {
         if (TAILQ_NEXT(block, blocks) != NULL && !block->no_separator && block->sep_block_width > 0) {
             /* This is not the last block, draw a separator. */
             uint32_t sep_offset = block->sep_block_width/2 + block->sep_block_width % 2;
-            uint32_t mask = XCB_GC_FOREGROUND | XCB_GC_BACKGROUND;
-            uint32_t values[] = { colors.sep_fg, colors.bar_bg };
+            uint32_t mask = XCB_GC_FOREGROUND | XCB_GC_BACKGROUND | XCB_GC_LINE_WIDTH;
+            uint32_t values[] = { colors.sep_fg, colors.bar_bg, logical_px(1) };
             xcb_change_gc(xcb_connection, statusline_ctx, mask, values);
             xcb_poly_line(xcb_connection, XCB_COORD_MODE_ORIGIN, statusline_pm,
                           statusline_ctx, 2,
@@ -340,11 +340,11 @@ void handle_button(xcb_button_press_event_t *event) {
         TAILQ_FOREACH_REVERSE(trayclient, walk->trayclients, tc_head, tailq) {
             if (!trayclient->mapped)
                 continue;
-            tray_width += (font.height + 2);
+            tray_width += (font.height + logical_px(2));
         }
 
         int block_x = 0, last_block_x;
-        int offset = (walk->rect.w - (statusline_width + tray_width)) - 10;
+        int offset = (walk->rect.w - (statusline_width + tray_width)) - logical_px(10);
 
         x = original_x - offset;
         if (x >= 0) {
@@ -388,13 +388,25 @@ void handle_button(xcb_button_press_event_t *event) {
             /* Check if this event regards a workspace button */
             TAILQ_FOREACH(cur_ws, walk->workspaces, tailq) {
                 DLOG("x = %d\n", x);
-                if (x >= 0 && x < cur_ws->name_width + 10) {
+                if (x >= 0 && x < cur_ws->name_width + logical_px(10)) {
                     break;
                 }
-                x -= cur_ws->name_width + 11;
+                x -= cur_ws->name_width + logical_px(11);
             }
+
+            /* Otherwise, focus our currently visible workspace if it is not
+             * already focused */
+            if (cur_ws == NULL) {
+                TAILQ_FOREACH(cur_ws, walk->workspaces, tailq) {
+                    if (cur_ws->visible && !cur_ws->focused)
+                        break;
+                }
+            }
+
+            /* if there is nothing to focus, we are done */
             if (cur_ws == NULL)
                 return;
+
             break;
         default:
             return;
@@ -453,8 +465,8 @@ static void configure_trayclients(void) {
             clients++;
 
             DLOG("Configuring tray window %08x to x=%d\n",
-                 trayclient->win, output->rect.w - (clients * (font.height + 2)));
-            uint32_t x = output->rect.w - (clients * (font.height + 2));
+                 trayclient->win, output->rect.w - (clients * (font.height + logical_px(2))));
+            uint32_t x = output->rect.w - (clients * (font.height + logical_px(2)));
             xcb_configure_window(xcb_connection,
                                  trayclient->win,
                                  XCB_CONFIG_WINDOW_X,
@@ -1108,7 +1120,7 @@ void init_xcb_late(char *fontname) {
     font = load_font(fontname, true);
     set_font(&font);
     DLOG("Calculated Font-height: %d\n", font.height);
-    bar_height = font.height + 6;
+    bar_height = font.height + logical_px(6);
 
     xcb_flush(xcb_connection);
 
@@ -1755,7 +1767,10 @@ void draw_bars(bool unhide) {
                               outputs_walk->bargc,
                               mask,
                               vals_border);
-                xcb_rectangle_t rect_border = { i, 1, ws_walk->name_width + 10, font.height + 4 };
+                xcb_rectangle_t rect_border = { i,
+                                                logical_px(1),
+                                                ws_walk->name_width + logical_px(10),
+                                                font.height + logical_px(4) };
                 xcb_poly_fill_rectangle(xcb_connection,
                                         outputs_walk->buffer,
                                         outputs_walk->bargc,
@@ -1766,7 +1781,10 @@ void draw_bars(bool unhide) {
                               outputs_walk->bargc,
                               mask,
                               vals);
-                xcb_rectangle_t rect = { i + 1, 2, ws_walk->name_width + 8, font.height + 2 };
+                xcb_rectangle_t rect = { i + logical_px(1),
+                                         2 * logical_px(1),
+                                         ws_walk->name_width + logical_px(8),
+                                         font.height + logical_px(2) };
                 xcb_poly_fill_rectangle(xcb_connection,
                                         outputs_walk->buffer,
                                         outputs_walk->bargc,
@@ -1774,8 +1792,8 @@ void draw_bars(bool unhide) {
                                         &rect);
                 set_font_colors(outputs_walk->bargc, fg_color, bg_color);
                 draw_text(ws_walk->name, outputs_walk->buffer, outputs_walk->bargc,
-                          i + 5, 3, ws_walk->name_width);
-                i += 10 + ws_walk->name_width + 1;
+                          i + logical_px(5), 3 * logical_px(1), ws_walk->name_width);
+                i += logical_px(10) + ws_walk->name_width + logical_px(1);
 
             }
         }

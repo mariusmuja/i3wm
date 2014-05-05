@@ -171,6 +171,13 @@ static int route_click(Con *con, xcb_button_press_event_t *event, const bool mod
     DLOG("--> OUTCOME = %p\n", con);
     DLOG("type = %d, name = %s\n", con->type, con->name);
 
+    /* if focus changes, we must rerender */
+    Con *initially_focused = focused;
+
+    /* don’t handle dockarea cons, they must not be focused */
+    if (con->parent->type == CT_DOCKAREA)
+        goto done;
+
     /* Any click in a workspace should focus that workspace. If the
      * workspace is on another output we need to do a workspace_show in
      * order for i3bar (and others) to notice the change in workspace. */
@@ -186,10 +193,6 @@ static int route_click(Con *con, xcb_button_press_event_t *event, const bool mod
     if (ws != focused_workspace)
         workspace_show(ws);
     focused_id = XCB_NONE;
-
-    /* don’t handle dockarea cons, they must not be focused */
-    if (con->parent->type == CT_DOCKAREA)
-        goto done;
 
     /* get the floating con */
     Con *floatingcon = con_inside_floating(con);
@@ -297,7 +300,10 @@ static int route_click(Con *con, xcb_button_press_event_t *event, const bool mod
 done:
     xcb_allow_events(conn, XCB_ALLOW_REPLAY_POINTER, event->time);
     xcb_flush(conn);
-    tree_render();
+
+    if (initially_focused != focused)
+        tree_render();
+
     return 0;
 }
 

@@ -31,11 +31,11 @@ Binding *configure_binding(const char *bindtype, const char *modifiers, const ch
 void grab_all_keys(xcb_connection_t *conn, bool bind_mode_switch);
 
 /**
- * Returns a pointer to the keyboard Binding with the specified modifiers and
- * keycode or NULL if no such binding exists.
+ * Returns a pointer to the Binding that matches the given xcb event or NULL if
+ * no such binding exists.
  *
  */
-Binding *get_keyboard_binding(uint16_t modifiers, bool key_release, xcb_keycode_t keycode);
+Binding *get_binding_from_xcb_event(xcb_generic_event_t *event);
 
 /**
  * Translates keysymbols to keycodes for all bindings which use keysyms.
@@ -48,3 +48,12 @@ void translate_keysyms(void);
  *
  */
 void switch_mode(const char *new_mode);
+
+/**
+ * Checks for duplicate key bindings (the same keycode or keysym is configured
+ * more than once). If a duplicate binding is found, a message is printed to
+ * stderr and the has_errors variable is set to true, which will start
+ * i3-nagbar.
+ *
+ */
+void check_for_duplicate_bindings(struct context *context);

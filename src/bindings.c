@@ -50,10 +50,15 @@ Binding *configure_binding(const char *bindtype, const char *modifiers, const ch
     DLOG("bindtype %s, modifiers %s, input code %s, release %s\n", bindtype, modifiers, input_code, release);
     new_binding->release = (release != NULL ? B_UPON_KEYRELEASE : B_UPON_KEYPRESS);
     if (strcmp(bindtype, "bindsym") == 0) {
+        new_binding->input_type = (strncasecmp(input_code, "button", (sizeof("button") - 1)) == 0
+            ? B_MOUSE
+            : B_KEYBOARD);
+
         new_binding->symbol = sstrdup(input_code);
     } else {
         // TODO: strtol with proper error handling
         new_binding->keycode = atoi(input_code);
+        new_binding->input_type = B_KEYBOARD;
         if (new_binding->keycode == 0) {
             ELOG("Could not parse \"%s\" as an input code, ignoring this binding.\n", input_code);
             FREE(new_binding);
@@ -62,7 +67,6 @@ Binding *configure_binding(const char *bindtype, const char *modifiers, const ch
     }
     new_binding->mods = modifiers_from_str(modifiers);
     new_binding->command = sstrdup(command);
-    new_binding->input_type = B_KEYBOARD;
 
     struct Mode *mode = mode_from_name(modename);
     TAILQ_INSERT_TAIL(mode->bindings, new_binding, bindings);
@@ -119,18 +123,18 @@ void grab_all_keys(xcb_connection_t *conn, bool bind_mode_switch) {
 }
 
 /*
- * Returns a pointer to the keyboard Binding with the specified modifiers and
+ * Returns a pointer to the Binding with the specified modifiers and
  * keycode or NULL if no such binding exists.
  *
  */
-Binding *get_keyboard_binding(uint16_t modifiers, bool key_release, xcb_keycode_t keycode) {
+static Binding *get_binding(uint16_t modifiers, bool is_release, uint16_t input_code, input_type_t input_type) {
     Binding *bind;
 
-    if (!key_release) {
-        /* On a KeyPress event, we first reset all
-         * B_UPON_KEYRELEASE_IGNORE_MODS bindings back to B_UPON_KEYRELEASE */
+    if (!is_release) {
+        /* On a press event, we first reset all B_UPON_KEYRELEASE_IGNORE_MODS
+         * bindings back to B_UPON_KEYRELEASE */
         TAILQ_FOREACH(bind, bindings, bindings) {
-            if (bind->input_type != B_KEYBOARD)
+            if (bind->input_type != input_type)
                 continue;
             if (bind->release == B_UPON_KEYRELEASE_IGNORE_MODS)
                 bind->release = B_UPON_KEYRELEASE;
@@ -141,43 +145,96 @@ Binding *get_keyboard_binding(uint16_t modifiers, bool key_release, xcb_keycode_
         /* First compare the modifiers (unless this is a
          * B_UPON_KEYRELEASE_IGNORE_MODS binding and this is a KeyRelease
          * event) */
-        if (bind->input_type != B_KEYBOARD)
+        if (bind->input_type != input_type)
             continue;
         if (bind->mods != modifiers &&
             (bind->release != B_UPON_KEYRELEASE_IGNORE_MODS ||
-             !key_release))
+             !is_release))
             continue;
 
-        /* If a symbol was specified by the user, we need to look in
-         * the array of translated keycodes for the event’s keycode */
-        if (bind->symbol != NULL) {
+        /* For keyboard bindings where a symbol was specified by the user, we
+         * need to look in the array of translated keycodes for the event’s
+         * keycode */
+        if (input_type == B_KEYBOARD && bind->symbol != NULL) {
             if (memmem(bind->translated_to,
                        bind->number_keycodes * sizeof(xcb_keycode_t),
-                       &keycode, sizeof(xcb_keycode_t)) == NULL)
+                       &input_code, sizeof(xcb_keycode_t)) == NULL)
                 continue;
         } else {
             /* This case is easier: The user specified a keycode */
-            if (bind->keycode != keycode)
+            if (bind->keycode != input_code)
                 continue;
         }
 
-        /* If this keybinding is a KeyRelease binding, it matches the key which
-         * the user pressed. We therefore mark it as
-         * B_UPON_KEYRELEASE_IGNORE_MODS for later, so that the user can
-         * release the modifiers before the actual key and the KeyRelease will
-         * still be matched. */
-        if (bind->release == B_UPON_KEYRELEASE && !key_release)
+        /* If this binding is a release binding, it matches the key which the
+         * user pressed. We therefore mark it as B_UPON_KEYRELEASE_IGNORE_MODS
+         * for later, so that the user can release the modifiers before the
+         * actual key or button and the release event will still be matched. */
+        if (bind->release == B_UPON_KEYRELEASE && !is_release)
             bind->release = B_UPON_KEYRELEASE_IGNORE_MODS;
 
-        /* Check if the binding is for a KeyPress or a KeyRelease event */
-        if ((bind->release == B_UPON_KEYPRESS && key_release) ||
-            (bind->release >= B_UPON_KEYRELEASE && !key_release))
+        /* Check if the binding is for a press or a release event */
+        if ((bind->release == B_UPON_KEYPRESS && is_release) ||
+            (bind->release >= B_UPON_KEYRELEASE && !is_release))
             continue;
 
         break;
     }
 
     return (bind == TAILQ_END(bindings) ? NULL : bind);
+}
+
+/*
+ * Returns a pointer to the Binding that matches the given xcb button or key
+ * event or NULL if no such binding exists.
+ *
+ */
+Binding *get_binding_from_xcb_event(xcb_generic_event_t *event) {
+    bool is_release = (event->response_type == XCB_KEY_RELEASE
+                        || event->response_type == XCB_BUTTON_RELEASE);
+
+    input_type_t input_type = ((event->response_type == XCB_BUTTON_RELEASE
+                                || event->response_type == XCB_BUTTON_PRESS)
+                                ? B_MOUSE
+                                : B_KEYBOARD);
+
+    uint16_t event_state = ((xcb_key_press_event_t *)event)->state;
+    uint16_t event_detail = ((xcb_key_press_event_t *)event)->detail;
+
+    /* Remove the numlock bit, all other bits are modifiers we can bind to */
+    uint16_t state_filtered = event_state & ~(xcb_numlock_mask | XCB_MOD_MASK_LOCK);
+    DLOG("(removed numlock, state = %d)\n", state_filtered);
+    /* Only use the lower 8 bits of the state (modifier masks) so that mouse
+     * button masks are filtered out */
+    state_filtered &= 0xFF;
+    DLOG("(removed upper 8 bits, state = %d)\n", state_filtered);
+
+    if (xkb_current_group == XkbGroup2Index)
+        state_filtered |= BIND_MODE_SWITCH;
+
+    DLOG("(checked mode_switch, state %d)\n", state_filtered);
+
+    /* Find the binding */
+    Binding *bind = get_binding(state_filtered, is_release, event_detail, input_type);
+
+    /* No match? Then the user has Mode_switch enabled but does not have a
+     * specific keybinding. Fall back to the default keybindings (without
+     * Mode_switch). Makes it much more convenient for users of a hybrid
+     * layout (like ru). */
+    if (bind == NULL) {
+        state_filtered &= ~(BIND_MODE_SWITCH);
+        DLOG("no match, new state_filtered = %d\n", state_filtered);
+        if ((bind = get_binding(state_filtered, is_release, event_detail, input_type)) == NULL) {
+            /* This is not a real error since we can have release and
+             * non-release bindings. On a press event for which there is only a
+             * !release-binding, but no release-binding, the corresponding
+             * release event will trigger this. No problem, though. */
+            DLOG("Could not lookup key binding (modifiers %d, keycode %d)\n",
+                 state_filtered, event_detail);
+        }
+    }
+
+    return bind;
 }
 
 /*
@@ -194,7 +251,17 @@ void translate_keysyms(void) {
     max_keycode = xcb_get_setup(conn)->max_keycode;
 
     TAILQ_FOREACH(bind, bindings, bindings) {
-        if (bind->input_type != B_KEYBOARD || bind->keycode > 0)
+        if (bind->input_type == B_MOUSE) {
+            int button = atoi(bind->symbol + (sizeof("button") - 1));
+            bind->keycode = button;
+
+            if (button < 1)
+                ELOG("Could not translate string to button: \"%s\"\n", bind->symbol);
+
+            continue;
+        }
+
+        if (bind->keycode > 0)
             continue;
 
         /* We need to translate the symbol to a keycode */
@@ -258,4 +325,57 @@ void switch_mode(const char *new_mode) {
     }
 
     ELOG("ERROR: Mode not found\n");
+}
+
+/*
+ * Checks for duplicate key bindings (the same keycode or keysym is configured
+ * more than once). If a duplicate binding is found, a message is printed to
+ * stderr and the has_errors variable is set to true, which will start
+ * i3-nagbar.
+ *
+ */
+void check_for_duplicate_bindings(struct context *context) {
+    Binding *bind, *current;
+    TAILQ_FOREACH(current, bindings, bindings) {
+        TAILQ_FOREACH(bind, bindings, bindings) {
+            /* Abort when we reach the current keybinding, only check the
+             * bindings before */
+            if (bind == current)
+                break;
+
+            /* Check if the input types are different */
+            if (bind->input_type != current->input_type)
+                continue;
+
+            /* Check if one is using keysym while the other is using bindsym.
+             * If so, skip. */
+            /* XXX: It should be checked at a later place (when translating the
+             * keysym to keycodes) if there are any duplicates */
+            if ((bind->symbol == NULL && current->symbol != NULL) ||
+                (bind->symbol != NULL && current->symbol == NULL))
+                continue;
+
+            /* If bind is NULL, current has to be NULL, too (see above).
+             * If the keycodes differ, it can't be a duplicate. */
+            if (bind->symbol != NULL &&
+                strcasecmp(bind->symbol, current->symbol) != 0)
+                continue;
+
+            /* Check if the keycodes or modifiers are different. If so, they
+             * can't be duplicate */
+            if (bind->keycode != current->keycode ||
+                bind->mods != current->mods ||
+                bind->release != current->release)
+                continue;
+
+            context->has_errors = true;
+            if (current->keycode != 0) {
+                ELOG("Duplicate keybinding in config file:\n  modmask %d with keycode %d, command \"%s\"\n",
+                     current->mods, current->keycode, current->command);
+            } else {
+                ELOG("Duplicate keybinding in config file:\n  modmask %d with keysym %s, command \"%s\"\n",
+                     current->mods, current->symbol, current->command);
+            }
+        }
+    }
 }
