@@ -31,124 +31,13 @@ void ungrab_all_keys(xcb_connection_t *conn) {
 }
 
 /*
- * Translates keysymbols to keycodes for all bindings which use keysyms.
- *
- */
-void translate_keysyms(void) {
-    Binding *bind;
-    xcb_keysym_t keysym;
-    int col;
-    xcb_keycode_t i,
-                  min_keycode = xcb_get_setup(conn)->min_keycode,
-                  max_keycode = xcb_get_setup(conn)->max_keycode;
-
-    TAILQ_FOREACH(bind, bindings, bindings) {
-        if (bind->keycode > 0)
-            continue;
-
-        /* We need to translate the symbol to a keycode */
-        keysym = XStringToKeysym(bind->symbol);
-        if (keysym == NoSymbol) {
-            ELOG("Could not translate string to key symbol: \"%s\"\n",
-                 bind->symbol);
-            continue;
-        }
-
-        /* Base column we use for looking up key symbols. We always consider
-         * the base column and the corresponding shift column, so without
-         * mode_switch, we look in 0 and 1, with mode_switch we look in 2 and
-         * 3. */
-        col = (bind->mods & BIND_MODE_SWITCH ? 2 : 0);
-
-        FREE(bind->translated_to);
-        bind->number_keycodes = 0;
-
-        for (i = min_keycode; i && i <= max_keycode; i++) {
-            if ((xcb_key_symbols_get_keysym(keysyms, i, col) != keysym) &&
-                (xcb_key_symbols_get_keysym(keysyms, i, col+1) != keysym))
-                continue;
-            bind->number_keycodes++;
-            bind->translated_to = srealloc(bind->translated_to,
-                                           (sizeof(xcb_keycode_t) *
-                                            bind->number_keycodes));
-            bind->translated_to[bind->number_keycodes-1] = i;
-        }
-
-        DLOG("Translated symbol \"%s\" to %d keycode\n", bind->symbol,
-             bind->number_keycodes);
-    }
-}
-
-/*
- * Switches the key bindings to the given mode, if the mode exists
- *
- */
-void switch_mode(const char *new_mode) {
-    struct Mode *mode;
-
-    LOG("Switching to mode %s\n", new_mode);
-
-    SLIST_FOREACH(mode, &modes, modes) {
-        if (strcasecmp(mode->name, new_mode) != 0)
-            continue;
-
-        ungrab_all_keys(conn);
-        bindings = mode->bindings;
-        translate_keysyms();
-        grab_all_keys(conn, false);
-
-        char *event_msg;
-        sasprintf(&event_msg, "{\"change\":\"%s\"}", mode->name);
-
-        ipc_send_event("mode", I3_IPC_EVENT_MODE, event_msg);
-        FREE(event_msg);
-
-        return;
-    }
-
-    ELOG("ERROR: Mode not found\n");
-}
-
-/*
  * Sends the current bar configuration as an event to all barconfig_update listeners.
- * This update mechnism currently only includes the hidden_state and the mode in the config.
  *
  */
 void update_barconfig() {
     Barconfig *current;
     TAILQ_FOREACH(current, &barconfigs, configs) {
-        /* Build json message */
-        char *hidden_state;
-        switch (current->hidden_state) {
-            case S_SHOW:
-                hidden_state ="show";
-                break;
-            case S_HIDE:
-            default:
-                hidden_state = "hide";
-                break;
-        }
-
-        char *mode;
-        switch (current->mode) {
-            case M_HIDE:
-                mode ="hide";
-                break;
-            case M_INVISIBLE:
-                mode ="invisible";
-                break;
-            case M_DOCK:
-            default:
-                mode = "dock";
-                break;
-        }
-
-        /* Send an event to all barconfig listeners*/
-        char *event_msg;
-        sasprintf(&event_msg, "{ \"id\":\"%s\", \"hidden_state\":\"%s\", \"mode\":\"%s\" }", current->id, hidden_state, mode);
-
-        ipc_send_event("barconfig_update", I3_IPC_EVENT_BARCONFIG_UPDATE, event_msg);
-        FREE(event_msg);
+        ipc_send_barconfig_update_event(current);
     }
 }
 
@@ -365,7 +254,7 @@ void load_configuration(xcb_connection_t *conn, const char *override_configpath,
 
     config.default_border = BS_NORMAL;
     config.default_floating_border = BS_NORMAL;
-    config.default_border_width = 2;
+    config.default_border_width = logical_px(2);
     /* Set default_orientation to NO_ORIENTATION for auto orientation. */
     config.default_orientation = NO_ORIENTATION;
 

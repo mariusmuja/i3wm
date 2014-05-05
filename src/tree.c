@@ -84,7 +84,7 @@ bool tree_restore(const char *path, xcb_get_geometry_reply_t *geometry) {
     };
     focused = croot;
 
-    tree_append_json(globbed, NULL);
+    tree_append_json(focused, globbed, NULL);
 
     printf("appended tree, using new root\n");
     croot = TAILQ_FIRST(&(croot->nodes_head));
@@ -260,10 +260,11 @@ bool tree_close(Con *con, kill_window_t kill_window, bool dont_kill_parent, bool
         FREE(con->window->class_class);
         FREE(con->window->class_instance);
         i3string_free(con->window->name);
+        FREE(con->window->ran_assignments);
 #ifdef USE_ICONS
         FREE(con->window->icon);
 #endif
-        free(con->window);
+        FREE(con->window);
     }
 
     Con *ws = con_get_workspace(con);

@@ -23,11 +23,6 @@ xcb_window_t focused_id = XCB_NONE;
  * tell whether the focused window actually changed. */
 static xcb_window_t last_focused = XCB_NONE;
 
-/* The bottom-to-top window stack of all windows which are managed by i3.
- * Used for x_get_window_stack(). */
-static xcb_window_t *btt_stack;
-static int btt_stack_num;
-
 /* Stores coordinates to warp mouse pointer to if set */
 static Rect *warp_to;
 
@@ -63,6 +58,7 @@ typedef struct con_state {
 
     CIRCLEQ_ENTRY(con_state) state;
     CIRCLEQ_ENTRY(con_state) old_state;
+    TAILQ_ENTRY(con_state) initial_mapping_order;
 } con_state;
 
 CIRCLEQ_HEAD(state_head, con_state) state_head =
@@ -70,6 +66,9 @@ CIRCLEQ_HEAD(state_head, con_state) state_head =
 
 CIRCLEQ_HEAD(old_state_head, con_state) old_state_head =
     CIRCLEQ_HEAD_INITIALIZER(old_state_head);
+
+TAILQ_HEAD(initial_mapping_head, con_state) initial_mapping_head =
+    TAILQ_HEAD_INITIALIZER(initial_mapping_head);
 
 /*
  * Returns the container state for the given frame. This function always
@@ -146,7 +145,6 @@ void x_con_init(Con *con, uint16_t depth) {
 
     Rect dims = { -15, -15, 10, 10 };
     con->frame = create_window(conn, dims, depth, visual, XCB_WINDOW_CLASS_INPUT_OUTPUT, XCURSOR_CURSOR_POINTER, false, mask, values);
-    con->frame_depth = depth;
 
     if (win_colormap != XCB_NONE)
         xcb_free_colormap(conn, win_colormap);
@@ -155,8 +153,10 @@ void x_con_init(Con *con, uint16_t depth) {
     state->id = con->frame;
     state->mapped = false;
     state->initial = true;
+    DLOG("Adding window 0x%08x to lists\n", state->id);
     CIRCLEQ_INSERT_HEAD(&state_head, state, state);
     CIRCLEQ_INSERT_HEAD(&old_state_head, state, old_state);
+    TAILQ_INSERT_TAIL(&initial_mapping_head, state, initial_mapping_order);
     DLOG("adding new state for window id 0x%08x\n", state->id);
 }
 
@@ -237,6 +237,7 @@ void x_con_kill(Con *con) {
     state = state_for_frame(con->frame);
     CIRCLEQ_REMOVE(&state_head, state, state);
     CIRCLEQ_REMOVE(&old_state_head, state, old_state);
+    TAILQ_REMOVE(&initial_mapping_head, state, initial_mapping_order);
     FREE(state->name);
     free(state);
 
@@ -778,8 +779,8 @@ void x_push_node(Con *con) {
             }
 
             uint16_t win_depth = root_depth;
-            if (con->frame_depth)
-                win_depth = con->frame_depth;
+            if (con->window)
+                win_depth = con->window->depth;
 
             xcb_create_pixmap(conn, win_depth, con->pixmap, con->frame, rect.width, rect.height);
 
@@ -985,19 +986,24 @@ void x_push_changes(Con *con) {
      * stack afterwards */
     int cnt = 0;
     CIRCLEQ_FOREACH_REVERSE(state, &state_head, state)
-        if (state->con && state->con->window)
+        if (con_has_managed_window(state->con))
             cnt++;
 
-    if (cnt != btt_stack_num) {
-        btt_stack = srealloc(btt_stack, sizeof(xcb_window_t) * cnt);
-        btt_stack_num = cnt;
+    /* The bottom-to-top window stack of all windows which are managed by i3.
+     * Used for x_get_window_stack(). */
+    static xcb_window_t *client_list_windows = NULL;
+    static int client_list_count = 0;
+
+    if (cnt != client_list_count) {
+        client_list_windows = srealloc(client_list_windows, sizeof(xcb_window_t) * cnt);
+        client_list_count = cnt;
     }
 
-    xcb_window_t *walk = btt_stack;
+    xcb_window_t *walk = client_list_windows;
 
     /* X11 correctly represents the stack if we push it from bottom to top */
     CIRCLEQ_FOREACH_REVERSE(state, &state_head, state) {
-        if (state->con && state->con->window)
+        if (con_has_managed_window(state->con))
             memcpy(walk++, &(state->con->window->id), sizeof(xcb_window_t));
 
         //DLOG("stack: 0x%08x\n", state->id);
@@ -1019,9 +1025,21 @@ void x_push_changes(Con *con) {
     }
 
     /* If we re-stacked something (or a new window appeared), we need to update
-     * the _NET_CLIENT_LIST_STACKING hint */
-    if (stacking_changed)
-        ewmh_update_client_list_stacking(btt_stack, btt_stack_num);
+     * the _NET_CLIENT_LIST and _NET_CLIENT_LIST_STACKING hints */
+    if (stacking_changed) {
+        DLOG("Client list changed (%i clients)\n", cnt);
+        ewmh_update_client_list_stacking(client_list_windows, client_list_count);
+
+        walk = client_list_windows;
+
+        /* reorder by initial mapping */
+        TAILQ_FOREACH(state, &initial_mapping_head, initial_mapping_order) {
+            if (con_has_managed_window(state->con))
+                *walk++ = state->con->window->id;
+        }
+
+        ewmh_update_client_list(client_list_windows, client_list_count);
+    }
 
     DLOG("PUSHING CHANGES\n");
     x_push_node(con);
@@ -1066,20 +1084,16 @@ void x_push_changes(Con *con) {
             /* Invalidate focused_id to correctly focus new windows with the same ID */
             focused_id = XCB_NONE;
         } else {
-            bool set_focus = true;
             if (focused->window != NULL &&
-                focused->window->needs_take_focus) {
+                focused->window->needs_take_focus &&
+                focused->window->doesnt_accept_focus) {
                 DLOG("Updating focus by sending WM_TAKE_FOCUS to window 0x%08x (focused: %p / %s)\n",
                      to_focus, focused, focused->name);
-                send_take_focus(to_focus);
-                set_focus = !focused->window->doesnt_accept_focus;
-                DLOG("set_focus = %d\n", set_focus);
+                send_take_focus(to_focus, last_timestamp);
 
-                if (!set_focus && to_focus != last_focused && is_con_attached(focused))
+                if (to_focus != last_focused && is_con_attached(focused))
                    ipc_send_window_event("focus", focused);
-            }
-
-            if (set_focus) {
+            } else {
                 DLOG("Updating focus (focused: %p / %s) to X11 window 0x%08x\n", focused, focused->name, to_focus);
                 /* We remove XCB_EVENT_MASK_FOCUS_CHANGE from the event mask to get
                  * no focus change events for our own focus changes. We only want

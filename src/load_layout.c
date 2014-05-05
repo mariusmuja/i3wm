@@ -133,11 +133,7 @@ static int json_end_array(void *ctx) {
     return 1;
 }
 
-#if YAJL_MAJOR < 2
-static int json_key(void *ctx, const unsigned char *val, unsigned int len) {
-#else
 static int json_key(void *ctx, const unsigned char *val, size_t len) {
-#endif
     LOG("key: %.*s\n", (int)len, val);
     FREE(last_key);
     last_key = scalloc((len+1) * sizeof(char));
@@ -160,11 +156,7 @@ static int json_key(void *ctx, const unsigned char *val, size_t len) {
     return 1;
 }
 
-#if YAJL_MAJOR >= 2
 static int json_string(void *ctx, const unsigned char *val, size_t len) {
-#else
-static int json_string(void *ctx, const unsigned char *val, unsigned int len) {
-#endif
     LOG("string: %.*s for key %s\n", (int)len, val, last_key);
     if (parsing_swallows) {
         char *sval;
@@ -307,13 +299,8 @@ static int json_string(void *ctx, const unsigned char *val, unsigned int len) {
     return 1;
 }
 
-#if YAJL_MAJOR >= 2
 static int json_int(void *ctx, long long val) {
     LOG("int %lld for key %s\n", val, last_key);
-#else
-static int json_int(void *ctx, long val) {
-    LOG("int %ld for key %s\n", val, last_key);
-#endif
     /* For backwards compatibility with i3 < 4.8 */
     if (strcasecmp(last_key, "type") == 0)
         json_node->type = val;
@@ -395,7 +382,7 @@ static int json_double(void *ctx, double val) {
     return 1;
 }
 
-void tree_append_json(const char *filename, char **errormsg) {
+void tree_append_json(Con *con, const char *filename, char **errormsg) {
     FILE *f;
     if ((f = fopen(filename, "r")) == NULL) {
         LOG("Cannot open file \"%s\"\n", filename);
@@ -427,19 +414,14 @@ void tree_append_json(const char *filename, char **errormsg) {
         .yajl_end_map = json_end_map,
         .yajl_end_array = json_end_array,
     };
-#if YAJL_MAJOR >= 2
     g = yajl_gen_alloc(NULL);
     hand = yajl_alloc(&callbacks, NULL, (void*)g);
-#else
-    g = yajl_gen_alloc(NULL, NULL);
-    hand = yajl_alloc(&callbacks, NULL, NULL, (void*)g);
-#endif
     /* Allowing comments allows for more user-friendly layout files. */
     yajl_config(hand, yajl_allow_comments, true);
     /* Allow multiple values, i.e. multiple nodes to attach */
     yajl_config(hand, yajl_allow_multiple_values, true);
     yajl_status stat;
-    json_node = focused;
+    json_node = con;
     to_focus = NULL;
     parsing_swallows = false;
     parsing_rect = false;
@@ -460,14 +442,10 @@ void tree_append_json(const char *filename, char **errormsg) {
     /* In case not all containers were restored, we need to fix the
      * percentages, otherwise i3 will crash immediately when rendering the
      * next time. */
-    con_fix_percent(focused);
+    con_fix_percent(con);
 
     setlocale(LC_NUMERIC, "");
-#if YAJL_MAJOR >= 2
     yajl_complete_parse(hand);
-#else
-    yajl_parse_complete(hand);
-#endif
 
     fclose(f);
     if (to_focus)

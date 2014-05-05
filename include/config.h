@@ -309,12 +309,6 @@ struct Barconfig {
 void load_configuration(xcb_connection_t *conn, const char *override_configfile, bool reload);
 
 /**
- * Translates keysymbols to keycodes for all bindings which use keysyms.
- *
- */
-void translate_keysyms(void);
-
-/**
  * Ungrabs all keys, to be called before re-grabbing the keys because of a
  * mapping_notify event or a configuration file reload
  *
@@ -322,16 +316,10 @@ void translate_keysyms(void);
 void ungrab_all_keys(xcb_connection_t *conn);
 
 /**
- * Switches the key bindings to the given mode, if the mode exists
+ * Sends the current bar configuration as an event to all barconfig_update listeners.
  *
  */
-void switch_mode(const char *new_mode);
-
-/**
- * Sends the current bar configuration as an event to all barconfig_update listeners.
- * This update mechnism currently only includes the hidden_state and the mode in the config.
- *
- */void update_barconfig();
+void update_barconfig();
 
 /**
  * Kills the configerror i3-nagbar process, if any.
